@@ -53,36 +53,61 @@ Data Source (SQLite - Drift)
 3. هيكل المشروع
 
 lib/
+
 ├── app/
+
 │   ├── app.dart
+
 │   ├── router.dart
+
 │   └── providers.dart
+
 │
 ├── core/
+
 │   ├── database/
+
 │   ├── theme/
+
 │   ├── utils/
+
 │   ├── constants/
+
 │   └── widgets/
 │
 ├── features/
+
 │   ├── auth/
+
 │   ├── dashboard/
+
 │   ├── patients/
+
 │   ├── doctors/
+
 │   ├── tests/
+
 │   ├── reports/
+
 │   ├── settings/
+
 │   └── backup/
 │
 ├── domain/
+
 │   ├── entities/
+
 │   ├── repositories/
+
 │   └── usecases/
+
 │
 ├── data/
+
 │   ├── models/
+
 │   ├── repositories_impl/
+
 │   └── local/
 │
 └── main.dart
