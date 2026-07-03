@@ -1,4 +1,4 @@
-Entername: DeepSeek Code Generator
+name: DeepSeek Code Generator
 
 on:
   workflow_dispatch:
@@ -35,21 +35,29 @@ jobs:
           PROMPT: ${{ github.event.inputs.prompt }}
           FILE_PATH: ${{ github.event.inputs.file_path }}
         run: |
-          python -c "
+          python - <<'PY'
           import os
+          import sys
           import requests
+          import json
 
-          api_key = os.environ['DEEPSEEK_API_KEY']
-          prompt = os.environ['PROMPT']
-          file_path = os.environ['FILE_PATH']
+          api_key = os.environ.get('DEEPSEEK_API_KEY')
+          prompt = os.environ.get('PROMPT', '')
+          file_path = os.environ.get('FILE_PATH', 'generated_code.py')
+
+          if not api_key:
+              print('ERROR: DEEPSEEK_API_KEY is not set.')
+              sys.exit(1)
 
           headers = {
               'Authorization': f'Bearer {api_key}',
               'Content-Type': 'application/json'
           }
 
-          # توجيه ديب سيك لإنتاج كود برمي نقي فقط بدون نصوص جانبية
-          system_message = 'You are an expert software engineer. Output ONLY the raw executable code for the requested file. Do not include markdown formatting like \`\`\`python, explanations, or introductory text. Just the code.'
+          system_message = (
+              "You are an expert software engineer. Output ONLY the raw executable code for the requested file. "
+              "Do not include markdown formatting like ```python, explanations, or introductory/closing text—only the file's code."
+          )
 
           data = {
               'model': 'deepseek-chat',
@@ -60,35 +68,72 @@ jobs:
               'temperature': 0.2
           }
 
-          response = requests.post('https://api.deepseek.com/v1/chat/completions', headers=headers, json=data)
-          result = response.json()
+          try:
+              resp = requests.post('https://api.deepseek.com/v1/chat/completions', headers=headers, json=data, timeout=120)
+          except Exception as e:
+              print('Request failed:', str(e))
+              sys.exit(1)
+
+          if resp.status_code != 200:
+              print('DeepSeek API error:', resp.status_code, resp.text)
+              sys.exit(1)
 
           try:
-              code_content = result['choices'][0]['message']['content'].strip()
-              
-              # تنظيف الكود في حال أضاف الموديل وسوم الماركداون بالخطأ
-              if code_content.startswith('\`\`\`'):
-                  lines = code_content.splitlines()
-                  if lines[0].startswith('\`\`\`'): lines = lines[1:]
-                  if lines[-1].startswith('\`\`\`'): lines = lines[:-1]
-                  code_content = '\n'.join(lines)
-
-              # إنشاء المجلدات إن لم تكن موجودة
-              if os.path.dirname(file_path):
-                  os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-              with open(file_path, 'w', encoding='utf-8') as f:
-                  f.write(code_content)
-              print('Successfully generated the code file.')
+              result = resp.json()
           except Exception as e:
-              print('Error generating code:', result)
-              raise e
-          "
+              print('Failed to parse JSON response:', str(e))
+              print('Raw response text:', resp.text)
+              sys.exit(1)
+
+          # Safely extract content
+          code_content = ''
+          try:
+              choices = result.get('choices', [])
+              if choices:
+                  msg = choices[0].get('message', {}) if isinstance(choices[0], dict) else {}
+                  code_content = msg.get('content', '') if isinstance(msg, dict) else ''
+              # fallback keys (in case API differs)
+              if not code_content and 'text' in choices[0]:
+                  code_content = choices[0].get('text', '')
+          except Exception:
+              code_content = ''
+
+          code_content = (code_content or '').strip()
+
+          if not code_content:
+              print('No code returned by DeepSeek. Full result:')
+              print(json.dumps(result, indent=2, ensure_ascii=False))
+              sys.exit(1)
+
+          # تنظيف الماركدوان إذا أضافته الموديل
+          if code_content.startswith('```'):
+              lines = code_content.splitlines()
+              if lines and lines[0].startswith('```'):
+                  lines = lines[1:]
+              if lines and lines[-1].startswith('```'):
+                  lines = lines[:-1]
+              code_content = '\n'.join(lines).strip()
+
+          # إنشاء المجلدات إن لم تكن موجودة
+          dirpath = os.path.dirname(file_path)
+          if dirpath:
+              os.makedirs(dirpath, exist_ok=True)
+
+          with open(file_path, 'w', encoding='utf-8') as f:
+              f.write(code_content)
+
+          print('Successfully generated the code file at', file_path)
+          PY
 
       - name: Commit and Push to Repository
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add "${{ github.event.inputs.file_path }}"
-          git commit -m "🤖 كود مالي تلقائي بواسطة DeepSeek: ${{ github.event.inputs.file_path }}"
-          git push
+          git add "${{ github.event.inputs.file_path }}" || true
+          # إذا لا توجد تغييرات مفهرسة لن يقوم commit ولن يفشل الخط
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "🤖 كود تلقائي بواسطة DeepSeek: ${{ github.event.inputs.file_path }}"
+            git push
+          fi
